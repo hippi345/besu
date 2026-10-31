@@ -36,6 +36,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import com.google.common.base.Suppliers;
@@ -114,19 +115,34 @@ public class DebugStandardTraceBlockToFile implements JsonRpcMethod {
 
   protected List<String> traceBlock(
       final Block block, final Optional<TransactionTraceParams> transactionTraceParams) {
-    return Tracer.processTracing(
-            blockchainQueries.get(),
-            Optional.of(block.getHeader()),
-            mutableWorldState ->
-                Optional.of(
-                    transactionTracerSupplier
-                        .get()
-                        .traceTransactionToFile(
-                            mutableWorldState,
-                            block.getHash(),
-                            transactionTraceParams,
-                            dataDir.resolve(TRACE_PATH),
-                            traceFilesMaxDirSize)))
-        .orElse(new ArrayList<>());
+    // BlockchainQueries.getAndMapWorldState catches and logs any exception thrown by the mapper,
+    // so the size limit exception is captured here and rethrown once processTracing returns.
+    final AtomicReference<TraceFilesDirSizeLimitExceededException> limitExceeded =
+        new AtomicReference<>();
+    final List<String> result =
+        Tracer.processTracing(
+                blockchainQueries.get(),
+                Optional.of(block.getHeader()),
+                mutableWorldState -> {
+                  try {
+                    return Optional.of(
+                        transactionTracerSupplier
+                            .get()
+                            .traceTransactionToFile(
+                                mutableWorldState,
+                                block.getHash(),
+                                transactionTraceParams,
+                                dataDir.resolve(TRACE_PATH),
+                                traceFilesMaxDirSize));
+                  } catch (final TraceFilesDirSizeLimitExceededException e) {
+                    limitExceeded.set(e);
+                    return Optional.empty();
+                  }
+                })
+            .orElse(new ArrayList<>());
+    if (limitExceeded.get() != null) {
+      throw limitExceeded.get();
+    }
+    return result;
   }
 }

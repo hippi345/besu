@@ -117,12 +117,17 @@ public class DebugStandardTraceBlockToFileTest {
     when(blockchain.getBlockByHash(block.getHash())).thenReturn(Optional.of(block));
     when(blockchain.getBlockHeader(genesis.getHash())).thenReturn(Optional.of(genesis.getHeader()));
     when(blockchainQueries.getBlockchain()).thenReturn(blockchain);
+    // Like the real BlockchainQueries.getAndMapWorldState, swallow mapper exceptions.
     when(blockchainQueries.getAndMapWorldState(any(), any()))
         .thenAnswer(
             invocationOnMock -> {
               Function<Tracer.TraceableState, ? extends Optional<BlockTracer>> mapper =
                   invocationOnMock.getArgument(1);
-              return mapper.apply(mock(Tracer.TraceableState.class));
+              try {
+                return mapper.apply(mock(Tracer.TraceableState.class));
+              } catch (final Exception e) {
+                return Optional.empty();
+              }
             });
     when(transactionTracer.traceTransactionToFile(
             any(MutableWorldState.class), eq(block.getHash()), any(), any(), eq(1024L)))
